@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data?</title>
-    <!-- Plotly.js CDN -->
+    <title>Affinity Unlocked</title>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
         body {
@@ -259,12 +258,12 @@
 </head>
 <body>
     <div class="container">
-        <h1>Data?</h1>
+        <h1>Affinity Unlocked</h1>
         <p>Stop guessing and start analyzing. Upload your WhatsApp chat history and let our analysis reveal the true potential of your connection.</p>
         
         <p id="mainErrorMessage" class="error-message main-error-message" style="display: none;"></p>
 
-       <label for="chatFileInput" class="upload-section ai-style-change-1">
+        <label for="chatFileInput" class="upload-section ai-style-change-1">
             <h3 class="ai-style-change-3">Upload your chat file</h3>
             <div class="icon ai-style-change-2">⬆️</div>
             <span style="font-size: 0.9em;">Drag & drop your file here or <span style="color: #9b59b6; text-decoration: underline;">click to browse</span></span>
@@ -278,7 +277,6 @@
                 <button onclick="clearFile()">Clear</button>
                 <button class="start-analysis" onclick="startAnalysis(event)">Start Analysis</button>
             </div>
-            <!-- REMOVED: Download Link Container -->
             <p id="errorMessage" class="error-message" style="display: none;"></p>
         </div>
 
@@ -335,7 +333,7 @@
         <div class="chart-container" id="emojiChart"></div>
     </div>
 
-    <div id="conversationFrequencyAnalysis" class="container analysis-section" style="display: none;">
+    <div id="conversationFrequencyAnalysis" class="container analysis-section">
         <h2>Conversation Frequency</h2>
         <p>See how often messages are exchanged over time.</p>
         <div class="chart-container" id="conversationFrequencyChart"></div>
@@ -404,7 +402,7 @@
         }
 
 
-        // Helper functions for Love Score calculation
+        // Helper functions for Love Score calculation (unchanged)
         function calculateRScore(T) { 
             const T_hours = T / 60;
             if (T_hours < 2) return 25;
@@ -490,48 +488,134 @@
 
         // --- Chat Parser Function
         function parseChatContent(text) {
+            // NEW: Pre-process text to replace common problematic non-standard spaces with standard spaces
+            text = text.replace(/[\u00A0\u202F\u2009]/g, ' '); 
+
             const lines = text.split('\n');
-            const chatLineRegex = /^(\d{1,2}\/\d{1,2}\/\d{2,4}), (\d{1,2}:\d{2}) - ([^:]+?): (.*)$/;
-            
+            // Array of possible chat line formats, ordered from most specific to least specific
+            const chatLineFormats = [
+                // Format 1: [DD/MM/YYYY, HH:MM:SS] or [DD/MM/YY, HH:MM:SS] (with brackets and seconds)
+                // Date separators can be /, -, . Time can have AM/PM
+                {
+                    regex: /^\[(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}),\s*(\d{1,2}:\d{2}:\d{2}(?:\s*[AP]M)?)\]\s*([^\n:]+?):\s*(.*)$/, 
+                    dateFormat: 'AUTO-DATE-HMS-BRACKET' 
+                },
+                // Format 2: [DD/MM/YYYY, HH:MM] or [DD/MM/YY, HH:MM] (with brackets, no seconds)
+                // Date separators can be /, -, . Time can have AM/PM
+                {
+                    regex: /^\[(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}),\s*(\d{1,2}:\d{2}(?:\s*[AP]M)?)\]\s*([^\n:]+?):\s*(.*)$/, 
+                    dateFormat: 'AUTO-DATE-HM-BRACKET' 
+                },
+                // Format 3: DD/MM/YYYY, HH:MM:SS - Sender: Message (no brackets, with seconds)
+                // Date separators can be /, -, . Time can have AM/PM
+                {
+                    regex: /^(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}),\s*(\d{1,2}:\d{2}:\d{2}(?:\s*[AP]M)?)\s*-\s*([^\n:]+?):\s*(.*)$/, 
+                    dateFormat: 'AUTO-DATE-HMS-NOBRACKET' 
+                },
+                // Format 4: M/D/YY, HH:MM - Sender: Message (no brackets, no seconds) - original flexible time
+                // This regex now accounts for AM/PM as well, covering '5/11/24, 11:28 PM'
+                {
+                    regex: /^(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}),\s*(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)\s*-\s*([^\n:]+?):\s*(.*)$/, 
+                    dateFormat: 'AUTO-DATE-HM-NOBRACKET' 
+                }
+            ];
+
             const emojiRegex = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\u200d|\uFE0F)/gu;
 
             const mediaIndicators = [
                 '<Media omitted>', '(file attached)', 'sticker omitted',
                 'video omitted', 'audio omitted', 'image omitted',
-                'GIF omitted', 'document omitted', '<this message was edited>' 
+                'GIF omitted', 'document omitted', '<this message was edited>',
+                'missed voice call', 'missed video call' 
             ];
             const systemMessageKeywords = [
                 'Messages and calls are end-to-end encrypted',
                 'You created group', 'You changed the group icon',
                 'You left', 'added', 'removed', 'changed the subject to',
-                'You changed your phone number', 'Missed voice call', 'Missed video call'
+                'You changed your phone number'
             ];
 
 
             let parsedMessages = []; 
             let currentMessage = null; 
+            let skippedLineCount = 0;
             
             for (const line of lines) {
-                const match = line.match(chatLineRegex);
+                let match = null;
+                let formatType = null;
+
+                for (const format of chatLineFormats) {
+                    match = line.match(format.regex);
+                    if (match) {
+                        formatType = format.dateFormat;
+                        break; 
+                    }
+                }
 
                 if (match) {
                     if (currentMessage) {
                         parsedMessages.push(currentMessage);
                     }
 
-                    const [, dateStr, timeStr, senderRaw, content] = match;
+                    const [, dateStr, timeStrRaw, senderRaw, content] = match; 
                     const sender = senderRaw.trim(); 
                     
-                    const [month, day, year] = dateStr.split('/').map(Number);
-                    const fullYear = (year < 70) ? (2000 + year) : (1900 + year); 
-                    const [hours, minutes] = timeStr.split(':').map(Number);
-                    const timestamp = new Date(fullYear, month - 1, day, hours, minutes);
+                    let timestamp;
+                    let hour, minute, second;
+                    let ampm;
+
+                    const timePartsMatch = timeStrRaw.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)?/i);
+                    if(timePartsMatch) {
+                        hour = parseInt(timePartsMatch[1]);
+                        minute = parseInt(timePartsMatch[2]);
+                        second = parseInt(timePartsMatch[3]) || 0;
+                        ampm = timePartsMatch[4];
+
+                        if (ampm) {
+                            if (ampm.toUpperCase() === 'PM' && hour < 12) {
+                                hour += 12;
+                            } else if (ampm.toUpperCase() === 'AM' && hour === 12) { 
+                                hour = 0;
+                            }
+                        }
+                    } else {
+                        console.warn(`[PARSER DEBUG] Time parsing failed for: "${timeStrRaw}". Skipping line.`);
+                        skippedLineCount++;
+                        continue; 
+                    }
+
+                    const dateParts = dateStr.split(/[\/\-\.]/).map(Number);
+                    let d, m, y;
+                    const p1 = dateParts[0]; 
+                    const p2 = dateParts[1]; 
+                    const p3 = dateParts[2]; 
+
+                    const fullYear = (p3 < 100) ? (p3 + 2000) : p3; 
+
+                    // HEURISTIC FOR DATE PARSING (DD/MM vs MM/DD)
+                    // Prioritizes DD/MM if p1 > 12, MDY if p2 > 12, otherwise defaults to MM/DD (as seen in user's logs for ambiguous dates)
+                    if (p1 > 12 && p2 <= 12) { 
+                        d = p1; m = p2; y = fullYear;
+                        console.log(`[PARSER DEBUG] Date ${dateStr}: Assumed DD/MM/YY(YY) (p1 > 12). Result: ${fullYear}/${m}/${d}`);
+                    } else if (p1 <= 12 && p2 > 12) { 
+                        d = p2; m = p1; y = fullYear;
+                        console.log(`[PARSER DEBUG] Date ${dateStr}: Assumed MM/DD/YY(YY) (p2 > 12). Result: ${fullYear}/${m}/${d}`);
+                    } else { // Ambiguous (e.g., 01/02/2023) or standard M/D/YY like 5/11/24 (from logs, this is MM/DD)
+                        // DEFAULT TO MM/DD/YYYY for ambiguous cases, based on recent user logs indicating this is common
+                        d = p2; m = p1; y = fullYear; 
+                        console.log(`[PARSER DEBUG] Date ${dateStr}: Ambiguous (both <=12). Defaulted to MM/DD/YY(YY). Result: ${fullYear}/${m}/${d}`);
+                    }
+
+                    timestamp = new Date(y, m - 1, d, hour, minute, second); 
                     
                     if (isNaN(timestamp.getTime())) {
-                        console.warn("Skipping message start due to invalid date/time format:", line);
+                        console.warn(`[PARSER DEBUG] Invalid Date object created for: "${line}". d=${d}, m=${m}, y=${y}, h=${hour}, min=${minute}, s=${second}. Skipping.`);
+                        skippedLineCount++;
                         currentMessage = null; 
                         continue; 
                     }
+                    console.log(`[PARSER DEBUG] Line Parsed: "${line.slice(0, 50)}..." -> Sender: "${sender}", Timestamp: ${timestamp.toLocaleString()}`);
+
 
                     currentMessage = {
                         sender: sender,
@@ -539,14 +623,20 @@
                         content: content.trim() 
                     };
 
-                } else if (currentMessage) {
-                    currentMessage.content += "\n" + line.trim();
+                } else { // Line did not match any message regex
+                    if (!currentMessage && line.trim() !== '') { 
+                        console.log(`[PARSER DEBUG] Skipping non-matching line (not message start or continuation): "${line.slice(0, 50)}..."`);
+                        skippedLineCount++;
+                    } else if (currentMessage) { 
+                        currentMessage.content += "\n" + line.trim();
+                    }
                 }
             }
 
             if (currentMessage) {
                 parsedMessages.push(currentMessage);
             }
+            logToDisplay(`Parser Debug: Skipped ${skippedLineCount} lines that were not message starts or continuations.`);
 
             let totalMessages = 0;
             let mediaCount = 0;
@@ -558,8 +648,15 @@
             let lastMessageTimestamp = null; 
 
             parsedMessages.forEach(msg => {
-                const isSystem = systemMessageKeywords.some(keyword => msg.content.includes(keyword));
+                // FIX APPLIED: isPurelyMediaDescription variable defined as a local variable here
+                const isPurelyMediaDescription = mediaIndicators.some(indicator => msg.content.toLowerCase().includes(indicator.toLowerCase())) && msg.content.trim().split(/\s+/).length < 5;
+
+                const isSystem = systemMessageKeywords.some(keyword => msg.content.includes(keyword)) || isPurelyMediaDescription;
+                
                 if (isSystem) {
+                    if(isPurelyMediaDescription) { 
+                        mediaCount++;
+                    }
                     return; 
                 }
 
@@ -567,7 +664,8 @@
                 lastMessageTimestamp = msg.timestamp; 
 
                 const isMedia = mediaIndicators.some(indicator => msg.content.toLowerCase().includes(indicator.toLowerCase())); 
-                if (isMedia) {
+                // The check now successfully uses the local variable
+                if (isMedia && !isPurelyMediaDescription) { 
                     mediaCount++;
                 }
                 
@@ -681,7 +779,7 @@
                 parsedSenders: sortedSenders.map(s => s[0]),
                 replyTimesMs: replyTimesMs,
                 lastMessageTimestamp: lastMessageTimestamp,
-                parsedMessages: parsedMessages // IMPORTANT: Return parsedMessages for Conversation Frequency Chart
+                parsedMessages: parsedMessages 
             };
         }
 
@@ -806,12 +904,12 @@
                     document.getElementById('analysisOverview').style.display = 'block';
                     document.getElementById('replyTimeAnalysis').style.display = 'block';
                     document.getElementById('emojiAnalysis').style.display = 'block';
-                    document.getElementById('conversationFrequencyAnalysis').style.display = 'block'; // Show new chart
+                    document.getElementById('conversationFrequencyAnalysis').style.display = 'block'; 
 
                     updateMetricsSummary();
                     plotReplyTimeChart();
                     plotEmojiChart();
-                    plotConversationFrequencyChart(); // Call new chart function
+                    plotConversationFrequencyChart(); 
                     updateFinalVerdict();
                     logToDisplay("Analysis and plotting complete."); 
                     hideProcessLog(); 
@@ -899,17 +997,14 @@
             ].filter(t => t <= maxPlotMinutes * 1.1 + 10); 
 
             const customTickVals = [];
-            const customTickText = [];
-
+            
             if (maxPlotMinutes > 0 && !potentialTickMinutes.includes(0)) {
                 customTickVals.push(0);
-                customTickText.push('0 min');
             }
 
             potentialTickMinutes.forEach(minutes => {
                 if (!customTickVals.includes(minutes)) { 
                     customTickVals.push(minutes);
-                    customTickText.push(formatTimeUnits(minutes)); 
                 }
             });
 
@@ -918,7 +1013,7 @@
 
 
             const trace = {
-                x: analysisData.replyTimeDistribution.map(d => d.x), 
+                x: analysisData.replyTimeDistribution.map(d => d.x), // X values remain in minutes for internal consistency
                 y: analysisData.replyTimeDistribution.map(d => d.y),
                 mode: 'lines+markers', 
                 line: { color: '#e74c3c', width: 3 },
@@ -1015,7 +1110,6 @@
 
         // NEW: Function to plot Conversation Frequency Chart
         function plotConversationFrequencyChart() {
-            // Ensure parsedMessages is available and not empty
             if (!analysisData.parsedMessages || analysisData.parsedMessages.length === 0) {
                 Plotly.purge('conversationFrequencyChart');
                 document.getElementById('conversationFrequencyChart').innerText = 'No conversation frequency data available.';
@@ -1023,14 +1117,11 @@
                 return;
             }
 
-            // Get the timestamp of the first message
             const firstMsgDate = analysisData.parsedMessages[0].timestamp;
             const today = new Date(); 
 
             const dailyMessageCounts = new Map();
 
-            // Initialize map with all dates from first message to today, with count 0
-            // Ensure dates are normalized to start of day for consistent keys
             let currentDate = new Date(firstMsgDate);
             currentDate.setHours(0, 0, 0, 0); 
 
@@ -1038,29 +1129,27 @@
             endDate.setHours(0, 0, 0, 0); 
 
             while (currentDate <= endDate) {
-                dailyMessageCounts.set(currentDate.toISOString().slice(0, 10), 0); // YYYY-MM-DD string as key
-                currentDate.setDate(currentDate.getDate() + 1); // Move to the next day
+                dailyMessageCounts.set(currentDate.toISOString().slice(0, 10), 0); 
+                currentDate.setDate(currentDate.getDate() + 1); 
             }
 
-            // Populate daily message counts from parsed messages
             analysisData.parsedMessages.forEach(msg => {
                 const msgDate = new Date(msg.timestamp);
-                msgDate.setHours(0, 0, 0, 0); // Normalize message timestamp to start of day
+                msgDate.setHours(0, 0, 0, 0); 
                 const dateString = msgDate.toISOString().slice(0, 10);
-                if (dailyMessageCounts.has(dateString)) { // Only count if date is within our initialized range
+                if (dailyMessageCounts.has(dateString)) { 
                     dailyMessageCounts.set(dateString, dailyMessageCounts.get(dateString) + 1);
                 }
             });
 
-            // Prepare data for Plotly
-            const plotX = Array.from(dailyMessageCounts.keys()).sort(); // Get sorted dates (YYYY-MM-DD strings)
-            const plotY = plotX.map(date => dailyMessageCounts.get(date)); // Get counts for each date
+            const plotX = Array.from(dailyMessageCounts.keys()).sort(); 
+            const plotY = plotX.map(date => dailyMessageCounts.get(date)); 
 
             const trace = {
                 x: plotX,
                 y: plotY,
-                type: 'bar', // Bar chart for frequency
-                marker: { color: '#27ae60' }, // Green color
+                type: 'bar', 
+                marker: { color: '#27ae60' }, 
                 name: 'Message Count'
             };
 
@@ -1074,8 +1163,8 @@
                     tickfont: { color: '#666' },
                     linecolor: '#ccc',
                     gridcolor: '#eee',
-                    type: 'date', // Plotly will handle date formatting for dates
-                    range: [firstMsgDate.toISOString().slice(0, 10), today.toISOString().slice(0, 10)] // Ensure range from first message to today
+                    type: 'date', 
+                    range: [firstMsgDate.toISOString().slice(0, 10), today.toISOString().slice(0, 10)] 
                 },
                 yaxis: {
                     title: 'Number of Messages',
@@ -1102,7 +1191,6 @@
             document.getElementById('replyTimeAnalysis').style.display = 'none';
             document.getElementById('emojiAnalysis').style.display = 'none';
             document.getElementById('conversationFrequencyAnalysis').style.display = 'none'; 
-            document.getElementById('downloadLinkContainer').style.display = 'none'; 
             document.getElementById('mainErrorMessage').style.display = 'none'; 
             document.getElementById('processLogDisplay').style.display = 'none'; 
         });
